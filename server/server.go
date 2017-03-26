@@ -67,6 +67,7 @@ func (h *Handler) Handle() {
 
 }
 
+// 将更新后的信息实时向客户端写入
 func (h *Handler) WriteBack(clientInfo *def.ClientInfo) {
 	for {
 		select {
@@ -80,6 +81,10 @@ func (h *Handler) WriteBack(clientInfo *def.ClientInfo) {
 	}
 }
 
+// 不断从客户端读取信息
+// OPEN命令是客户端连接服务器发送的第一个命令
+// SHUT、QUIT命令客户端并没有发送，因为没有未客户端提供发送这两个命令的入口...
+// 客户端退出是由客户端放动断开链接实现的....
 func (h *Handler) KeepReading(id string) {
 	defer func() {
 		h.Stop()
@@ -91,7 +96,6 @@ func (h *Handler) KeepReading(id string) {
 			go func() {
 				que.QuitChan <- id
 			}()
-			//			log.Println("conn is close..., error: ", err)
 			return
 		}
 

@@ -7,7 +7,7 @@ import (
 	def "thinkerchi/queue-system/define"
 )
 
-var N int
+var N int // 最大同时可在线游戏人数
 
 var (
 	EnqueueChan    chan def.ClientInfo // 进入排队时发送
@@ -53,21 +53,27 @@ func Init() {
 	WaitList = list.New()
 }
 
+// 操作WaitList列表的入口，所有有关操作都在这个函数中
 func OperateWaitList() {
 	for {
 		select {
+		// 有用户登陆
 		case clientInfo := <-EnqueueChan:
 			Enqueue(clientInfo)
+		// 有用户退出排队
 		case id := <-QuitQueueChan:
 			QuitQueue(id)
+		// 有用户退出游戏
 		case <-QuitGameChan:
 			QuitGame()
+		// 有用户退出，具体是退出排队还是游戏在Quit(）内进一步判断
 		case id := <-QuitChan:
 			Quit(id)
 		}
 	}
 }
 
+// 新用户登陆
 func Enqueue(clientInfo def.ClientInfo) {
 	WaitNumMap[clientInfo.Id] = WaitList.Len()
 	WaitList.PushFront(clientInfo)
@@ -83,18 +89,15 @@ func Enqueue(clientInfo def.ClientInfo) {
 		IsQueuedChan <- struct{}{}
 	}()
 
-	//	logs.Logger.Infof("coming id: %s, wait: %d", clientInfo.Id, WaitNumMap[clientInfo.Id])
-
 	EndInfoChanged(GetOnlinePlayers(), WaitList.Len())
 }
 
+// 用户退出
 func Quit(id string) {
 	waitN, ok := WaitNumMap[id]
 	if !ok {
 		return
 	}
-
-	//	logs.Logger.Infof("id: %s, waitN: %d, ok: %v", id, waitN, ok)
 
 	if waitN == -1 {
 		EndInfoChanged(DecrOnlinePlayers(), WaitList.Len())
@@ -105,6 +108,8 @@ func Quit(id string) {
 
 }
 
+// 用户退出排队
+// 从WaitList表删除此用户，并且更新受影响的排队用户的等待位置
 func QuitQueue(id string) {
 
 	delete(WaitNumMap, id)
@@ -121,7 +126,6 @@ func QuitQueue(id string) {
 					Front:  wait,
 					Status: 1,
 				}
-				//				logs.Logger.Infof("front: %d, status: %d", notifyInfo.Front, notifyInfo.Status)
 				clientInfo.NotifyInfoChan <- notifyInfo
 			}(clientInfo, wait)
 		}
@@ -130,6 +134,9 @@ func QuitQueue(id string) {
 	EndInfoChanged(GetOnlinePlayers(), WaitList.Len())
 }
 
+// 有用户退出游戏
+// 并不关心是哪个用户退出游戏...
+// 让WaitList中时间最靠前的排队用户进入游戏，并且更新所有其他排队用户的排队位置
 func QuitGame() {
 
 	e := WaitList.Back()
@@ -165,7 +172,6 @@ func QuitGame() {
 				Front:  wait,
 				Status: 1,
 			}
-			//			logs.Logger.Infof("front: %d, status: %d", notifyInfo.Front, notifyInfo.Status)
 			info.NotifyInfoChan <- notifyInfo
 		}(info, wait)
 	}
@@ -180,6 +186,7 @@ func EndInfoChanged(players, queuers int) {
 	ChangeInfoChan <- changeInfo
 }
 
+// 向控制台打印实时更新的用户数据
 func ListenChanges() {
 	for {
 		select {
@@ -189,6 +196,8 @@ func ListenChanges() {
 	}
 }
 
+// 检测是否还有游戏空位
+// 如果有，并且有人排队，就发送一个有人退出游戏的信息(将有人退出游戏和有空位抽象成一种情况处理)
 func EnterGame() {
 	EndInfoChanged(0, 0)
 	for {
