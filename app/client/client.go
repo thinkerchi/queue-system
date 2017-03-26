@@ -2,13 +2,17 @@ package main
 
 import (
 	"fmt"
+	//	"sync"
 	"thinkerchi/queue-system/client"
 
 	"github.com/dlintw/goconf"
 )
 
 func main() {
+	go run()
+}
 
+func run() {
 	conf := "./client.ini"
 
 	l_conf, err := goconf.ReadConfigFile(conf)

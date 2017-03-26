@@ -1,0 +1,12 @@
+{
+	"comment": "",
+	"ignore": "test",
+	"package": [
+		{
+			"checksumSHA1": "RSi7QpjPy007TrhCkFk2XYYX/g8=",
+			"path": "github.com/dlintw/goconf",
+			"revision": ""
+		}
+	],
+	"rootPath": "thinkerchi/queue-system"
+}

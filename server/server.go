@@ -72,10 +72,7 @@ func (h *Handler) WriteBack(clientInfo *def.ClientInfo) {
 		select {
 		case nofityInfo := <-clientInfo.NotifyInfoChan:
 			if err := h.WritePacket(&nofityInfo); err != nil {
-				go func() {
-					que.QuitChan <- clientInfo.Id
-				}()
-				log.Printf("user %s write error: %v\n", clientInfo.Id, err)
+				return
 			}
 		case <-h.stop:
 			return

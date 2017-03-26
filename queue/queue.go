@@ -85,7 +85,7 @@ func Enqueue(clientInfo def.ClientInfo) {
 
 	//	logs.Logger.Infof("coming id: %s, wait: %d", clientInfo.Id, WaitNumMap[clientInfo.Id])
 
-	go EndInfoChanged(GetOnlinePlayers(), WaitList.Len())
+	EndInfoChanged(GetOnlinePlayers(), WaitList.Len())
 }
 
 func Quit(id string) {
@@ -97,10 +97,8 @@ func Quit(id string) {
 	//	logs.Logger.Infof("id: %s, waitN: %d, ok: %v", id, waitN, ok)
 
 	if waitN == -1 {
-		go func() {
-			<-PlayChan
-			EndInfoChanged(DecrOnlinePlayers(), WaitList.Len())
-		}()
+		EndInfoChanged(DecrOnlinePlayers(), WaitList.Len())
+		<-PlayChan
 	} else {
 		QuitQueue(id)
 	}
@@ -129,7 +127,7 @@ func QuitQueue(id string) {
 		}
 	}
 
-	go EndInfoChanged(GetOnlinePlayers(), WaitList.Len())
+	EndInfoChanged(GetOnlinePlayers(), WaitList.Len())
 }
 
 func QuitGame() {
@@ -148,7 +146,7 @@ func QuitGame() {
 
 	WaitNumMap[clientInfo.Id] = -1
 
-	go EndInfoChanged(GetOnlinePlayers(), WaitList.Len())
+	EndInfoChanged(GetOnlinePlayers(), WaitList.Len())
 
 	go func(clientInfo def.ClientInfo) {
 		notifyInfo := def.NofityInfo{
