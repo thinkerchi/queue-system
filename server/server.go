@@ -10,8 +10,14 @@ import (
 	"time"
 )
 
+var (
+	Ip   string
+	Port string
+)
+
 func Run() {
-	l, err := net.Listen("tcp", ":1234")
+	opt := fmt.Sprintf("%s:%s", Ip, Port)
+	l, err := net.Listen("tcp", opt)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return
@@ -30,8 +36,9 @@ func Run() {
 
 func NewHandler(conn net.Conn) *Handler {
 	return &Handler{
-		conn: conn,
-		stop: make(chan struct{}),
+		conn:    conn,
+		stop:    make(chan struct{}),
+		timeout: 2,
 	}
 }
 
@@ -45,12 +52,6 @@ func (h *Handler) Stop() {
 	h.stop <- struct{}{}
 }
 
-func (h *Handler) SetTimeout(timeout int64) {
-	h.conn.SetDeadline(time.Now().Add(time.Duration(timeout) * time.Second))
-}
-
-// 协议 4(命令) + 20(id)
-// 命令： SHUT/QUIT/OPEN
 func (h *Handler) Handle() {
 	defer h.conn.Close()
 
@@ -62,7 +63,7 @@ func (h *Handler) Handle() {
 
 	go h.WriteBack(clientInfo)
 
-	h.KeepReading()
+	h.KeepReading(clientInfo.Id)
 
 }
 
@@ -70,18 +71,19 @@ func (h *Handler) WriteBack(clientInfo *def.ClientInfo) {
 	for {
 		select {
 		case nofityInfo := <-clientInfo.NotifyInfoChan:
-			go func() {
-				if err := h.WritePacket(&nofityInfo); err != nil {
-					log.Printf("user %s write error: %v\n", clientInfo.Id, err)
-				}
-			}()
+			if err := h.WritePacket(&nofityInfo); err != nil {
+				go func() {
+					que.QuitChan <- clientInfo.Id
+				}()
+				log.Printf("user %s write error: %v\n", clientInfo.Id, err)
+			}
 		case <-h.stop:
 			return
 		}
 	}
 }
 
-func (h *Handler) KeepReading() {
+func (h *Handler) KeepReading(id string) {
 	defer func() {
 		h.Stop()
 
@@ -89,7 +91,10 @@ func (h *Handler) KeepReading() {
 	for {
 		readInfo, err := h.ReadPacket()
 		if err != nil {
-			log.Println("conn is close..., error: ", err)
+			go func() {
+				que.QuitChan <- id
+			}()
+			//			log.Println("conn is close..., error: ", err)
 			return
 		}
 
@@ -152,6 +157,7 @@ func (h *Handler) ReadPacket() (content *def.ReadInfo, err error) {
 
 func (h *Handler) WritePacket(info *def.NofityInfo) (err error) {
 	rb := info.ToBytes()
+	h.conn.SetWriteDeadline(time.Now().Add(time.Second * time.Duration(h.timeout)))
 	_, err = h.conn.Write(rb)
 
 	return

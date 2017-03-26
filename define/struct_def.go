@@ -19,6 +19,11 @@ type ClientInfo struct {
 	NotifyInfoChan chan NofityInfo
 }
 
+type ChangeInfo struct {
+	Players int
+	Queuers int
+}
+
 func (t *NofityInfo) ReadFromBytes(src []byte) {
 	if len(src) < 5 {
 		return

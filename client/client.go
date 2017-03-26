@@ -8,8 +8,14 @@ import (
 	"thinkerchi/queue-system/utils"
 )
 
+var (
+	Ip   string
+	Port string
+)
+
 func Run() {
-	conn, err := net.Dial("tcp", ":1234")
+	opt := fmt.Sprintf("%s:%s", Ip, Port)
+	conn, err := net.Dial("tcp", opt)
 	if err != nil {
 		log.Println(err)
 		return
@@ -21,15 +27,13 @@ func Run() {
 func NewClient(conn net.Conn) *Client {
 	return &Client{
 		conn: conn,
+		stop: make(chan struct{}),
 	}
 }
 
 type Client struct {
-	conn    net.Conn
-	stop    chan struct{}
-	Id      string
-	WaitNum int
-	Status  int
+	conn net.Conn
+	stop chan struct{}
 }
 
 func (c *Client) Stop() {
@@ -46,35 +50,36 @@ func (c *Client) Handle() {
 		return
 	}
 
+	fmt.Println(info.Id)
+
 	go c.KeepReceiving()
 
 	c.WriteToServer(info)
 }
 
 func (c *Client) KeepReceiving() {
+	defer c.Stop()
+
 	for {
-		select {
-		case <-c.stop:
+
+		notifyInfo, err := c.ReadPacket()
+		if err != nil {
 			return
-		default:
-			notifyInfo, err := c.ReadPacket()
-			if err != nil {
-				return
-			}
-			go func() {
-				NotifyInfoChan <- *notifyInfo
-			}()
 		}
+		go func() {
+			NotifyInfoChan <- *notifyInfo
+		}()
+
 	}
 }
 
 func (c *Client) WriteToServer(info *def.ReadInfo) {
-	defer c.Stop()
-
 	select {
 	case <-QuitQueueInfoChan:
-		c.WriteToServer(info)
+		c.conn.Write(info.ToBytes())
 		fmt.Println("Quitting....")
+	case <-c.stop:
+		return
 	}
 
 }
@@ -96,6 +101,8 @@ func (c *Client) InitPacket() (readInfo *def.ReadInfo, err error) {
 		log.Println(err)
 		return
 	}
+
+	readInfo = &initInfo
 
 	return
 }

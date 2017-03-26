@@ -2,37 +2,51 @@ package queue
 
 import (
 	"container/list"
+	"fmt"
+	"sync/atomic"
 	def "thinkerchi/queue-system/define"
 )
 
-//type def.NofityInfo struct {
-//	Front  int // 前面排队人数
-//	Status int // 用户状态，1：排队中，2：游戏中
-//}
-
-//type def.ClientInfo struct {
-//	Id             string
-//	NofityInfoChan chan def.NofityInfo
-//}
+var N int
 
 var (
-	EnqueueChan   chan def.ClientInfo // 进入排队时发送
-	QuitQueueChan chan string         // 退出排队时发送
-	QuitGameChan  chan struct{}       //  退出游戏时发送
+	EnqueueChan    chan def.ClientInfo // 进入排队时发送
+	QuitQueueChan  chan string         // 退出排队时发送
+	QuitGameChan   chan struct{}       //  退出游戏时发送
+	QuitChan       chan string         // 链接断开时发送
+	ChangeInfoChan chan def.ChangeInfo // 在线人数变化时发送
+	IsQueuedChan   chan struct{}       // 是否有人在排队
 )
 
 var (
-	WaitNumMap map[string]int
-	WaitList   *list.List
-	PlayChan   chan struct{} // 正在游戏中的人，用于控制正在游戏中的人数
+	WaitNumMap    map[string]int // 用户id和其当前排队位置的Map
+	WaitList      *list.List     // 正在排队中的用户
+	PlayChan      chan struct{}  // 正在游戏中的人，用于控制正在游戏中的人数
+	OnlinePlayers int32          // 正在游戏中的人数
 )
 
-var N = 2
+func GetOnlinePlayers() int {
+	n := atomic.LoadInt32(&OnlinePlayers)
+	return int(n)
+}
+
+func IncrOnlinePlayers() int {
+	n := atomic.AddInt32(&OnlinePlayers, 1)
+	return int(n)
+}
+
+func DecrOnlinePlayers() int {
+	n := atomic.AddInt32(&OnlinePlayers, -1)
+	return int(n)
+}
 
 func Init() {
 	EnqueueChan = make(chan def.ClientInfo)
 	QuitQueueChan = make(chan string)
 	QuitGameChan = make(chan struct{})
+	QuitChan = make(chan string)
+	ChangeInfoChan = make(chan def.ChangeInfo)
+	IsQueuedChan = make(chan struct{}, 100)
 
 	PlayChan = make(chan struct{}, N)
 	WaitNumMap = make(map[string]int)
@@ -48,6 +62,8 @@ func OperateWaitList() {
 			QuitQueue(id)
 		case <-QuitGameChan:
 			QuitGame()
+		case id := <-QuitChan:
+			Quit(id)
 		}
 	}
 }
@@ -56,7 +72,39 @@ func Enqueue(clientInfo def.ClientInfo) {
 	WaitNumMap[clientInfo.Id] = WaitList.Len()
 	WaitList.PushFront(clientInfo)
 
-	go QueuerChanged(WaitList.Len())
+	notifyInfo := def.NofityInfo{
+		Front:  WaitNumMap[clientInfo.Id],
+		Status: 1,
+	}
+
+	clientInfo.NotifyInfoChan <- notifyInfo
+
+	go func() {
+		IsQueuedChan <- struct{}{}
+	}()
+
+	//	logs.Logger.Infof("coming id: %s, wait: %d", clientInfo.Id, WaitNumMap[clientInfo.Id])
+
+	go EndInfoChanged(GetOnlinePlayers(), WaitList.Len())
+}
+
+func Quit(id string) {
+	waitN, ok := WaitNumMap[id]
+	if !ok {
+		return
+	}
+
+	//	logs.Logger.Infof("id: %s, waitN: %d, ok: %v", id, waitN, ok)
+
+	if waitN == -1 {
+		go func() {
+			<-PlayChan
+			EndInfoChanged(DecrOnlinePlayers(), WaitList.Len())
+		}()
+	} else {
+		QuitQueue(id)
+	}
+
 }
 
 func QuitQueue(id string) {
@@ -75,12 +123,13 @@ func QuitQueue(id string) {
 					Front:  wait,
 					Status: 1,
 				}
+				//				logs.Logger.Infof("front: %d, status: %d", notifyInfo.Front, notifyInfo.Status)
 				clientInfo.NotifyInfoChan <- notifyInfo
 			}(clientInfo, wait)
 		}
 	}
 
-	go QueuerChanged(WaitList.Len())
+	go EndInfoChanged(GetOnlinePlayers(), WaitList.Len())
 }
 
 func QuitGame() {
@@ -90,13 +139,17 @@ func QuitGame() {
 		<-PlayChan
 		return
 	} else {
-		go PlayerChanged(len(PlayChan))
+		IncrOnlinePlayers()
 	}
 
 	WaitList.Remove(e)
-	go QueuerChanged(WaitList.Len())
 
 	clientInfo := e.Value.(def.ClientInfo)
+
+	WaitNumMap[clientInfo.Id] = -1
+
+	go EndInfoChanged(GetOnlinePlayers(), WaitList.Len())
+
 	go func(clientInfo def.ClientInfo) {
 		notifyInfo := def.NofityInfo{
 			Front:  0,
@@ -107,35 +160,42 @@ func QuitGame() {
 
 	for e = WaitList.Front(); e != nil; e = e.Next() {
 		info := e.Value.(def.ClientInfo)
-		wait := WaitNumMap[clientInfo.Id] - 1
-		WaitNumMap[clientInfo.Id] = wait
+		wait := WaitNumMap[info.Id] - 1
+		WaitNumMap[info.Id] = wait
 		go func(info def.ClientInfo, wait int) {
 			notifyInfo := def.NofityInfo{
 				Front:  wait,
 				Status: 1,
 			}
-			clientInfo.NotifyInfoChan <- notifyInfo
+			//			logs.Logger.Infof("front: %d, status: %d", notifyInfo.Front, notifyInfo.Status)
+			info.NotifyInfoChan <- notifyInfo
 		}(info, wait)
 	}
 
 }
 
-func PlayerChanged(leng int) {
-	PlayerChangedChan <- leng
+func EndInfoChanged(players, queuers int) {
+	changeInfo := def.ChangeInfo{
+		Players: players,
+		Queuers: queuers,
+	}
+	ChangeInfoChan <- changeInfo
 }
 
-func QueuerChanged(leng int) {
-	QueuerChangedChan <- leng
+func ListenChanges() {
+	for {
+		select {
+		case info := <-ChangeInfoChan:
+			fmt.Println("正在游戏人数：", info.Players, "\t正在排队人数：", info.Queuers)
+		}
+	}
 }
-
-var (
-	PlayerChangedChan chan int
-	QueuerChangedChan chan int
-)
 
 func EnterGame() {
+	EndInfoChanged(0, 0)
 	for {
 		PlayChan <- struct{}{}
+		<-IsQueuedChan
 		QuitGameChan <- struct{}{}
 	}
 }
