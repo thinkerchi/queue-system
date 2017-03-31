@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	go run()
+	run()
 }
 
 func run() {
